@@ -1,0 +1,3 @@
+[flake8]
+max-line-length = 107
+ignore = F821,W503
