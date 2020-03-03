@@ -65,5 +65,5 @@ class Critic(nn.Module):
         # add actions in the second hidden layer as per the paper
         x = torch.cat((x, a), 1)
         x = F.relu(self.hidden2(x))
-        x = F.tanh(self.output(x))
+        x = self.output(x)
         return x

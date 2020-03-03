@@ -2,9 +2,11 @@ from random import random
 from typing import Any, Dict
 
 import numpy as np
+import pickle
 import torch
 from torch import nn
 from torch.optim import Adam
+from typing import Optional
 
 from src.networks import Actor, Critic
 from src.noise import noise
@@ -23,20 +25,24 @@ class DDPG:
         critic_target: Critic,
         variables: Dict[str, Any],
         models_path: str,
+        replay_buffer: Optional[ReplayBuffer]
     ):
         self.env = env
         self.actor = actor
         self.actor_target = actor_target
         self.critic = critic
         self.critic_target = critic_target
-        for k, v in variables.items():
-            setattr(self, k, v)
-        self.actor_optimizer = Adam(self.actor.parameters(), lr=self.actor_learning_rate)
+        self.gamma = variables["gamma"]
+        self.minibatch_size = variables["minibatch_size"]
+        self.device = variables["device"]
+        self.max_episodes = variables["max_episodes"]
+        self.tau = variables["tau"]
+        self.actor_optimizer = Adam(self.actor.parameters(), lr=variables["actor_lr"])
         self.critic_optimizer = Adam(
-            self.critic.parameters(), lr=self.critic_learning_rate, weight_decay=self.l2_weight_decay
+            self.critic.parameters(), lr=variables["critic_lr"], weight_decay=variables["weight_decay"]
         )
         self.critic_loss_fn = nn.MSELoss()
-        self.replay_buffer = ReplayBuffer(self.replay_buffer_size)
+        self.replay_buffer = replay_buffer if replay_buffer is not None else ReplayBuffer(variables["replay_buffer_size"])
         self.models_path = models_path
         self.min_act_value = env.action_space.low[0]
         self.max_act_value = env.action_space.high[0]
@@ -82,7 +88,7 @@ class DDPG:
             param_c_target.data.copy_((1 - self.tau) * param_c_target.data + self.tau * param_c.data)
 
     def get_minibatch(self):
-        """Return `minibatch_size` (state, action, next_state) tuples as Tensors."""
+        """Return `minibatch_size` (state, action, next_state, reward, done) tuples as Tensors."""
         minibatch = self.replay_buffer.get(self.minibatch_size)
         states = torch.stack([mb.state for mb in minibatch])[:, -1, :]
         actions = torch.tensor([mb.action for mb in minibatch], device=self.device)[:, -1, :]
@@ -92,20 +98,30 @@ class DDPG:
         return states, actions, next_states, rewards, dones
 
     def log(self, rand, steps, sum_of_rewards):
+        """Print information about the latest episode."""
         s = ""
         if rand:
             s += f"Exploration episode {self.exploration_episodes} "
         else:
             s += f"Exploitation episode {self.exploitation_episodes} "
+        s += f"of {self.exploration_episodes + self.exploitation_episodes} total "
         s += f"finished after {steps} steps with sum of rewards {sum_of_rewards}"
         print(s)
         print(f"policy_loss = {self.policy_loss}")
         print(f"critic_loss = {self.critic_loss}\n")
 
+    def save_models(self):
+        """Save the current models to disk."""
+        torch.save(self.critic, self.models_path + "critic")
+        torch.save(self.actor, self.models_path + "actor")
+        torch.save(self.critic_target, self.models_path + "critic_target")
+        torch.save(self.actor_target, self.models_path + "actor_target")
+        with open(self.models_path + "replay_buffer", "wb") as rb:
+            pickle.dump(self.replay_buffer, rb, pickle.HIGHEST_PROTOCOL)
 
-    def run_episode(self, state=None, rand=False):
-        if state is None:
-            state = to_tensor_variable([self.env.reset()])
+    def run_episode(self, rand=False):
+        """Run a single episode in either exploration (rand=True) or exploitation mode."""
+        state = to_tensor_variable([self.env.reset()])
         t = 0
         done = False
         sum_of_rewards = 0
@@ -122,12 +138,11 @@ class DDPG:
 
             next_state, reward, done, _ = self.env.step(action[0])
             next_state = to_tensor_variable([next_state])
+            # fix this and the action (we want the type to be List[float])
             self.replay_buffer.store(Transition(state, action, next_state, reward, done))
-
             sum_of_rewards += reward
-
             state = next_state
-
+            
             if self.replay_buffer.occupied > self.minibatch_size:
                 states, actions, next_states, rewards, dones = self.get_minibatch()
                 self.update_critic(states, actions, next_states, rewards, dones)
@@ -137,11 +152,7 @@ class DDPG:
             if done:
                 self.log(rand, t, sum_of_rewards)
                 if (self.exploitation_episodes + self.exploration_episodes) % 100 == 0:
-                    torch.save(self.critic, self.models_path + "critic")
-                    torch.save(self.actor, self.models_path + "actor")
-                    torch.save(self.critic_target, self.models_path + "critic_target")
-                    torch.save(self.actor_target, self.models_path + "actor_target")
-                break
+                    self.save_models()
 
     def explore(self, n_episodes):
         """Explores for n_episodes"""
@@ -149,11 +160,12 @@ class DDPG:
             self.exploration_episodes += 1
             self.run_episode(rand=True)
 
-    def train(self):
+    def train(self, initial_exploration=False):
         """Train the four networks"""
-        # self.explore(self.minibatch_size)
+        if initial_exploration:
+            self.explore(self.minibatch_size)
         for i_episode in range(1, self.max_episodes):
-            if 0 < random() <= 0.1:
+            if 0 <= random() <= 0.05:
                 self.explore(1)
             else:
                 self.exploitation_episodes += 1
