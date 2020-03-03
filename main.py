@@ -6,6 +6,7 @@ from pathlib import Path
 import gym
 import pickle
 import torch
+import visdom
 
 from src.ddpg import DDPG
 from src.networks import Actor, Critic
