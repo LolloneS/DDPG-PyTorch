@@ -12,7 +12,6 @@ from src.networks import Actor, Critic
 from src.variables import variables
 
 env = gym.make("LunarLanderContinuous-v2")
-# env = gym.wrappers.Monitor(env, "videos/", force=True)
 models_path = "models/"
 
 

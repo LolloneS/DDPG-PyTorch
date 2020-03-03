@@ -25,7 +25,7 @@ class DDPG:
         critic_target: Critic,
         variables: Dict[str, Any],
         models_path: str,
-        replay_buffer: Optional[ReplayBuffer]
+        replay_buffer: Optional[ReplayBuffer] = None
     ):
         self.env = env
         self.actor = actor
@@ -75,7 +75,7 @@ class DDPG:
         """Update the actor by maximizing the expected return."""
         self.actor_optimizer.zero_grad()
         # we take the negative because we want to maximize J (expected return)
-        self.policy_loss = -self.critic(states, self.actor(states)).mean()
+        self.policy_loss = (-self.critic(states, self.actor(states))).mean()
         self.policy_loss.backward()
         self.actor_optimizer.step()
 
@@ -163,7 +163,7 @@ class DDPG:
     def train(self, initial_exploration=False):
         """Train the four networks"""
         if initial_exploration:
-            self.explore(self.minibatch_size)
+            self.explore(256)
         for i_episode in range(1, self.max_episodes):
             if 0 <= random() <= 0.05:
                 self.explore(1)
